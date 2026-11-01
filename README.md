@@ -33,7 +33,7 @@ backend_integration/
 
 ## Requirements
 
-- Python 3.10 or later.
+- Python 3.11 or later.
 - A Databricks workspace and an authenticated Databricks SDK environment.
 - A Lakebase PostgreSQL database and a database endpoint configured for credential generation.
 - At least one Genie space registered and enabled to answer Genie questions.
