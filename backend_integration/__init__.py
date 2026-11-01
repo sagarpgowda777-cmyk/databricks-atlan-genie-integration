@@ -1,2 +1,2 @@
-"""Keystone multi-Genie orchestration package."""
+"""Project Name multi-Genie orchestration package."""
 
