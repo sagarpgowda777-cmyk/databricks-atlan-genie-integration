@@ -1,7 +1,7 @@
 # databricks-atlan-genie-integration
 Databricks + Atlan integration: enrich Genie with Atlan semantic metadata, lineage, and governance through MCP. Multi-agent AI with LangGraph on Delta Lake and Unity Catalog.
 
-This repository contains the Python backend for **Databricks Genie**, a FastAPI service that routes questions to Databricks Genie spaces and can enrich answers with Atlan metadata and a Databricks knowledge endpoint.
+This repository contains the Python backend for **Project Genie**, a FastAPI service that routes questions to Databricks Genie spaces and can enrich answers with Atlan metadata and a Databricks knowledge endpoint.
 
 ## What it does
 
