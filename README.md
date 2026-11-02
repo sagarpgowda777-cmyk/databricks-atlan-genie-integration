@@ -1,4 +1,5 @@
 # databricks-atlan-genie-integration
+
 Databricks + Atlan integration: enrich Genie with Atlan semantic metadata, lineage, and governance through MCP. Multi-agent AI with LangGraph on Delta Lake and Unity Catalog.
 
 This repository contains the Python backend for **Project Genie**, a FastAPI service that routes questions to Databricks Genie spaces and can enrich answers with Atlan metadata and a Databricks knowledge endpoint.
@@ -12,9 +13,119 @@ This repository contains the Python backend for **Project Genie**, a FastAPI ser
 - Persists the space registry, chat history and session context, skills, and usage history in Lakebase PostgreSQL.
 - Exposes APIs for managing spaces, skills, sessions, and usage.
 
+## Architecture
+
+The service is a single FastAPI application. Each request runs on behalf of the signed-in user, and an orchestrator decides which Genie spaces and context sources to use.
+
+```mermaid
+flowchart LR
+    U["Client app<br/>(web UI / API consumer)"] -->|"HTTP + SSE"| API
+
+    subgraph SVC["Project Genie service (FastAPI, Databricks App)"]
+        API["api.py<br/>routes and auth headers"]
+        ORC["orchestrator.py<br/>LangGraph routing and answer synthesis"]
+        GB["genie_builder.py<br/>space discovery, preview, create"]
+        GC["genie_client.py<br/>Genie MCP client"]
+        AC["atlan_client.py<br/>metadata and lineage"]
+        KC["knowledge_client.py<br/>knowledge endpoint"]
+        MEM["memory.py<br/>in-process conversation memory"]
+        STORES["registry / session_store /<br/>skills_store / usage_store"]
+        API --> ORC
+        API --> GB
+        API --> STORES
+        ORC --> GC
+        ORC --> AC
+        ORC --> KC
+        ORC --> MEM
+        ORC --> STORES
+    end
+
+    GC -->|"MCP"| GENIE["Databricks Genie spaces<br/>(Unity Catalog / Delta Lake)"]
+    GB -->|"SQL warehouse + Genie API"| GENIE
+    ORC -->|"routing and synthesis"| LLM["Databricks model serving<br/>(LLM endpoint)"]
+    KC --> KNOW["Databricks knowledge endpoint<br/>(Responses API)"]
+    AC -->|"REST (OAuth client credentials)"| ATLAN["Atlan tenant"]
+    STORES -->|"psycopg 3 + short-lived credentials"| LB[("Lakebase PostgreSQL")]
+    ORC -.->|"traces"| MLF["MLflow tracking"]
+```
+
+### Request flow (`POST /api/chat` and `/api/chat/stream`)
+
+1. **Authenticate.** `api.py` reads `X-Forwarded-Access-Token` and `X-Forwarded-Email`, so Databricks calls run as the signed-in user and sessions, skills, and usage are scoped per user.
+2. **Load context.** The orchestrator loads the session's routing context from Lakebase and recent turns from in-process memory.
+3. **Route.** The orchestrator reads the enabled spaces from the registry and, when `DATABRICKS_LLM_ENDPOINT` is set, uses the LLM to pick up to `MAX_ROUTED_SPACES` spaces for the question.
+4. **Enrich (optional).** When Atlan is configured, `atlan_client.py` adds table context, data products, glossary terms, and lineage. When `DATABRICKS_KNOWLEDGE_ENDPOINT` is set, `knowledge_client.py` handles knowledge-style questions.
+5. **Query Genie.** `genie_client.py` calls the selected spaces through the Genie MCP interface and collects the answers.
+6. **Synthesize and stream.** The orchestrator combines the answers into one response. Progress and the final result are streamed as SSE events (or returned at once for `/api/chat`).
+7. **Persist.** The chat messages, session context, and usage entry are written to Lakebase. If `MLFLOW_EXPERIMENT_ID` is set, LangChain calls are traced in MLflow.
+
+### Genie space builder flow
+
+`GET /api/spaces/builder/tables` lists tables visible to the user through the SQL warehouse. `POST /api/spaces/builder/preview` returns a proposed space and a signed confirmation token. `POST /api/spaces/builder/create` verifies the token, creates the Genie space, and registers it. The builder is enabled only when `GENIE_BUILDER_WAREHOUSE_ID` and `GENIE_BUILDER_SIGNING_SECRET` are both set.
+
+### Atlan sync flow
+
+`POST /api/spaces/sync-atlan` discovers AI applications in Atlan and registers or updates the matching Genie spaces in the registry. It requires `ATLAN_BASE_URL`, `ATLAN_CLIENT_ID`, and `ATLAN_CLIENT_SECRET`.
+
+## Dependencies
+
+### External services
+
+| Service | Required | Used for | Configured by |
+|---|---|---|---|
+| Databricks workspace (Unity Catalog, Genie) | Yes | Genie spaces, user-authorized queries, SDK authentication | Databricks SDK environment |
+| Lakebase PostgreSQL | Yes | Space registry, chat history, session context, skills, usage history | `PGHOST`, `PGDATABASE`, `PGUSER`, `DATABASE_ENDPOINT` |
+| Databricks model serving (LLM endpoint) | No | LLM-assisted routing and answer orchestration | `DATABRICKS_LLM_ENDPOINT` |
+| Databricks knowledge endpoint | No | Knowledge questions (Responses API) | `DATABRICKS_KNOWLEDGE_ENDPOINT` |
+| Databricks SQL warehouse | No | Genie space builder (table discovery and creation) | `GENIE_BUILDER_WAREHOUSE_ID` |
+| Atlan tenant | No | AI application discovery, table context, data products, glossary, lineage | `ATLAN_BASE_URL`, `ATLAN_CLIENT_ID`, `ATLAN_CLIENT_SECRET` |
+| MLflow tracking | No | Experiment selection and LangChain autologging | `MLFLOW_TRACKING_URI`, `MLFLOW_EXPERIMENT_ID` |
+
+### Python packages
+
+Python 3.11 or later is required.
+
+| Package | Purpose |
+|---|---|
+| `fastapi` | HTTP API and generated OpenAPI docs |
+| `uvicorn` | ASGI server |
+| `pydantic` | Request and response models, settings validation |
+| `psycopg` (v3) | Lakebase PostgreSQL connections |
+| `databricks-sdk` | Authentication, short-lived Lakebase credentials, workspace and Genie APIs |
+| `databricks-mcp` | MCP client for Genie spaces |
+| `langchain-core` | Message and runnable primitives |
+| `langgraph` | Multi-step routing and orchestration graph |
+| `requests` | Atlan and knowledge endpoint HTTP calls |
+| `mlflow` | Tracing and experiment tracking |
+| `databricks-langchain` | Databricks LLM integration (only when `DATABRICKS_LLM_ENDPOINT` is used) |
+
+Install them with:
+
+```bash
+pip install -r requirements.txt
+```
+
+`requirements.txt` is the source of truth for versions. Pin them in your deployment process before running in production.
+
+### Module map
+
+| Module | Depends on |
+|---|---|
+| `api.py` | FastAPI, Pydantic, all stores, orchestrator, genie_builder |
+| `orchestrator.py` | LangGraph, LangChain Core, databricks-langchain, genie_client, atlan_client, knowledge_client, memory, MLflow |
+| `genie_client.py` | databricks-mcp, databricks-sdk |
+| `genie_builder.py` | databricks-sdk (SQL warehouse and Genie APIs) |
+| `atlan_client.py` | requests |
+| `knowledge_client.py` | databricks-sdk, requests |
+| `registry.py`, `session_store.py`, `skills_store.py`, `usage_store.py` | psycopg, databricks-sdk (credential generation) |
+| `config.py`, `models.py` | Pydantic, environment variables |
+
 ## Project layout
 
 ```text
+app.py                 Entry point for Databricks Apps
+app.yaml               Databricks Apps configuration
+requirements.txt       Python dependencies
 backend_integration/
   api.py               FastAPI application factory and HTTP routes
   config.py            Environment-based settings
@@ -37,9 +148,7 @@ backend_integration/
 - A Databricks workspace and an authenticated Databricks SDK environment.
 - A Lakebase PostgreSQL database and a database endpoint configured for credential generation.
 - At least one Genie space registered and enabled to answer Genie questions.
-- The Python packages imported by the service: FastAPI, Uvicorn, Pydantic, Psycopg 3, Databricks SDK, Databricks MCP, LangChain Core, LangGraph, Requests, and MLflow. The optional Databricks LLM integration also uses `databricks-langchain`.
-
-This repository does not currently include a dependency lockfile or deployment manifest. Install dependencies through your organization's approved environment or deployment process, and pin versions there.
+- The Python packages listed under [Dependencies](#dependencies).
 
 ## Configuration
 
@@ -96,7 +205,11 @@ uvicorn backend_integration.api:create_app --factory --host 127.0.0.1 --port 800
 
 The service listens at `http://127.0.0.1:8000`. FastAPI's interactive API documentation is available at `/docs`, and its OpenAPI schema at `/openapi.json`.
 
-For Databricks Apps, enable **User authorization**. The chat and Genie builder endpoints require the `X-Forwarded-Access-Token` header provided by the app platform so Databricks calls run on behalf of the signed-in user. User identity headers such as `X-Forwarded-Email` are used to scope user-specific sessions, skills, and usage.
+## Deploy on Databricks Apps
+
+The repository includes `app.py` and `app.yaml` for deployment as a Databricks App. Set the environment variables from the [Configuration](#configuration) section through the app's environment or secret resources, not in committed files.
+
+Enable **User authorization**. The chat and Genie builder endpoints require the `X-Forwarded-Access-Token` header provided by the app platform so Databricks calls run on behalf of the signed-in user. User identity headers such as `X-Forwarded-Email` are used to scope user-specific sessions, skills, and usage.
 
 ## API overview
 
