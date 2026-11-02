@@ -166,8 +166,8 @@ The application reads configuration from environment variables. The four require
 | `GENIE_SESSION_CONTEXT_TABLE` | No | `public.session_context` | Persisted routing and conversation context table. |
 | `GENIE_CHAT_SESSIONS_TABLE` | No | `public.chat_sessions` | Chat session table. |
 | `GENIE_CHAT_MESSAGES_TABLE` | No | `public.chat_messages` | Chat message table. |
-| `GENIE_SKILLS_TABLE` | No | `public.keystone_skills` | User skills table. |
-| `GENIE_USAGE_HISTORY_TABLE` | No | `public.keystone_usage_history` | Usage history table. |
+| `GENIE_SKILLS_TABLE` | No | `public.skills` | User skills table. |
+| `GENIE_USAGE_HISTORY_TABLE` | No | `public.usage_history` | Usage history table. |
 | `MAX_SESSIONS_PER_USER` | No | `5` | Maximum retained chat sessions per user. |
 | `MAX_SKILLS_PER_USER` | No | `10` | Maximum skills per user. |
 | `DATABRICKS_LLM_ENDPOINT` | No | Unset | Databricks model-serving endpoint used for LLM routing and answer orchestration. Without it, LLM-assisted routing is unavailable. |
