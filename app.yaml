@@ -28,9 +28,9 @@ env_variables:
   GENIE_CHAT_SESSIONS_TABLE: "public.chat_sessions"
   GENIE_CHAT_MESSAGES_TABLE: "public.chat_messages"
   MAX_SESSIONS_PER_USER: "5"
-  GENIE_SKILLS_TABLE: "public.keystone_skills"
+  GENIE_SKILLS_TABLE: "public.project_name_skills"
   MAX_SKILLS_PER_USER: "10"
-  GENIE_USAGE_HISTORY_TABLE: "public.keystone_usage_history"
+  GENIE_USAGE_HISTORY_TABLE: "public.project_name_usage_history"
 
   GENIE_BUILDER_WAREHOUSE_ID: ""
   GENIE_BUILDER_PARENT_PATH: ""
